@@ -1,0 +1,125 @@
+substitutions:
+  devicename: deerma-f600
+  upper_devicename: "Humidifier Deerma F600"
+  low_devicename: deerma_f600
+
+external_components:
+  - source:
+      #type: git
+      #url: https://github.com/Brokly/...
+      type: local
+      path: my_components     
+    components: [ humidifier_f600 ]
+    refresh: 0s
+
+esphome:
+  name: $devicename
+  includes:
+    - my_components/humidifier_f600/humidifier_f600.h
+
+esp32:
+  board:  esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_pass
+  #manual_ip:
+  #  static_ip: !secret ip_humidifier_f600
+  #  gateway: !secret gateway 
+  #  subnet: !secret subnet
+  #  dns1: !secret dns1
+  #  dns2: !secret dns2
+  ap:
+    ssid:  ${upper_devicename} Hotspot
+    password: !secret ap_wifi_pass
+
+logger:
+    level: DEBUG
+    #baud_rate: 0
+ 
+api:
+
+ota:
+  password: !secret ota_pass
+
+captive_portal:
+    
+web_server:
+  port: 80
+  auth:
+    username: !secret web_user
+    password: !secret web_pass
+
+i2c:
+#шина I2C для датчика влажности и температуры GY-21
+  sda: GPIO21
+  scl: GPIO22
+  
+binary_sensor:
+#статус устройства
+  - platform: status
+    name: ${upper_devicename} Status
+    id: ${low_devicename}_status
+
+switch:
+#свитч рестарта устройства
+  - platform: restart
+    name: ${upper_devicename} Restart SW
+    id: ${low_devicename}_restart_sw_id
+
+text_sensor:
+#версия прошивки
+  - platform: version
+    name: ${upper_devicename} ESPHome Version
+
+sensor:
+#датчик отображающий уровень сигнала Wifi
+  - platform: wifi_signal
+    name: ${upper_devicename} Signal
+    update_interval: 60s
+#время работы устройства после загрузки
+  - platform: uptime
+    name: ${upper_devicename} Uptime Sensor
+#датчик температуры и влажности GY-21, используется как внешний для увлажнителя
+  - platform: htu21d
+    temperature:
+      name: ${upper_devicename} Temperature
+      id: ${low_devicename}_temperature_id
+    humidity:
+      name: ${upper_devicename} Humidity
+      id: ${low_devicename}_humidity_id
+    update_interval: 60s
+#увлажнитель
+  - platform: "humidifier_f600"
+    #name: $upper_devicename
+    id: ${low_devicename}_id
+    update_interval: 60s
+    disp_sync_pin: GPIO16
+    disp_read0_pin: GPIO18
+    disp_read1_pin: GPIO5
+    sensor_control_pin: GPIO17
+    # внешний датчик влажности для компонента
+    sensor_humidity_id: ${low_devicename}_humidity_id
+    # внутренний датчик температуры
+    temperature:
+      name: ${upper_devicename} Main Temperature
+      id: ${low_devicename}_main_temperature_id
+    # сенсор воды
+    water_ok:
+      name: ${upper_devicename} Water
+      id: ${low_devicename}_water_id
+    # текущий режим работы
+    current_state:  
+      name: ${upper_devicename} Current State
+      id: ${low_devicename}_state_id
+    # селектор выбора режимов работы
+    current_preset:
+      name: ${upper_devicename} Current Preset
+      id: ${low_devicename}_preset_id
+    # установка целевой влажности
+    humidity_destination:
+      name: ${upper_devicename} Himidity Destination
+      id: ${low_devicename}_humi_dest_id
+   
