@@ -23,16 +23,16 @@
 По конфигу:
 
 Обязательно задать ножки подключения к увлажнителю (pin)<br>
-    disp_sync_pin: <br>
+     <strong>disp_sync_pin: <br>
     disp_read0_pin: <br>
     disp_read1_pin: <br>
-    sensor_control_pin: <br><br>
+    sensor_control_pin:  </strong><br><br>
 Обязательно указать id датчика влажности по которому поумневший увлажнитель будет понимать текущую влажность (sensor)<br>
-    sensor_humidity_id: <br><br>
+     <strong>sensor_humidity_id:  </strong><br><br>
 Обязательно - селектор режимов работы (Off, Low, Medium, High, Auto) (select)<br>
-    current_preset:<br><br>
+     <strong>current_preset: </strong><br><br>
 Текстовое описание текущего режима (text_sensor)<br>
-    current_state:<br><br>
+    <strong> current_state: </strong><br><br>
 Ползунок установки желаемой влажности (number)<br>
-    humidity_destination:<br><br>
+     <strong>humidity_destination: </strong><br><br>
     Много писать не буду, будут вопросы спрашивайте тут - https://github.com/Brokly/ESPHome-Humidifier-Deerma-F600/issues<br>
