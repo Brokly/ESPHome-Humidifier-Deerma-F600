@@ -5,10 +5,10 @@ substitutions:
 
 external_components:
   - source:
-      #type: git
-      #url: https://github.com/Brokly/...
-      type: local
-      path: my_components     
+      type: git
+      url: https://github.com/Brokly/ESPHome-Humidifier-Deerma-F600/tree/main/my_components/humidifier_f600
+      #type: local
+      #path: my_components     
     components: [ humidifier_f600 ]
     refresh: 0s
 
