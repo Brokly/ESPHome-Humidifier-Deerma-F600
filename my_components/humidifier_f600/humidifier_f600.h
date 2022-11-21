@@ -43,7 +43,11 @@ enum device_op:uint8_t  { doIDLE,  // простой
                           doMID,   // среднее распыление
                           doHIGH,  // сильное распыление
                           doERROR, // ошибка, возможно нет воды
-                          doUNDEF
+                          doUNDEF,
+                          doMANUAL_OFF, // пользователь перехватил управление
+                          doMANUAL_LOW, // пользователь перехватил управление
+                          doMANUAL_MID, // пользователь перехватил управление
+                          doMANUAL_HIGH, // пользователь перехватил управление
 };
 // установка пользователя
 enum device_set:uint8_t { dsOFF,
@@ -89,6 +93,10 @@ class HumiF600 : public Sensor, public PollingComponent  {
     const char *const _Off = "Off";
     const char *const _Auto = "Auto";
     const char *const _Error = "Error";
+    const char *const _ManualOff = "Manual Off";
+    const char *const _ManualLow = "Manual Low";
+    const char *const _ManualMid = "Manual Mid";
+    const char *const doMANUAL_High = "Manual High";
     // для автоматического регулирования влажности
     const float gisteresis=1; //гистерезис регулирования
     // для регулировани режимов в пресете AUTO
@@ -262,10 +270,31 @@ class HumiF600 : public Sensor, public PollingComponent  {
             strcpy(ret,_High);
         } else if(op==doERROR){
             strcpy(ret,_Error);
+        } else if(op==doMANUAL_OFF){
+            strcpy(ret,_ManualOff);
+        } else if(op==doMANUAL_LOW){
+            strcpy(ret,_ManualLow);
+        } else if(op==doMANUAL_MID){
+            strcpy(ret,_ManualMid);
+        } else if(op==doMANUAL_HIGH){
+            strcpy(ret,doMANUAL_High);
         } else {
             strcpy(ret,_Unexpected); 
         }
         return ret;
+    }
+  
+    char* get_str_from_op_manual(device_op op){
+        if(op==doIDLE){
+            op=doMANUAL_OFF;
+        } else if(op==doLOW){
+            op=doMANUAL_LOW;
+        } else if(op==doMID){
+            op=doMANUAL_MID;
+        } else if(op==doHIGH){
+            op=doMANUAL_HIGH;
+        }
+        return get_str_from_op(op);
     }
   
     // определение режима работы установленного пользователем из стринга
@@ -458,8 +487,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
         if(sens_delay) {
             uint32_t _now=millis();
             if(_now-sens_timer>sens_delay+1500){ // между нажатиями на кнопку должно быть не менее 1сек
-                sens_delay=0;
-                need_new_set=false; //снимаем флаг установки режима эмуляцией сенсора
+               sens_delay=0; 
             } else if (_now-sens_timer>sens_delay){ // истекло время нажатия
                this->sens_pin->digital_write(true); 
             }               
@@ -484,7 +512,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
                     } else {
                         manual=true; // раз нажали кнопку слипа - перешли в ручное управление
                         _debugMsg(F("%010u: Set to manual mode."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
-                        //тут слип, нам не нужен
+                        op_mode->publish_state(get_str_from_op_manual(operate));
                     }
                     waterOk=true; // вода есть
                     if(now_operate==doERROR){ // восстановить индикацию режима работы
@@ -505,8 +533,12 @@ class HumiF600 : public Sensor, public PollingComponent  {
                 } else if(scr[0]=='#' && scr[1]=='#'){ // сильное распыление
                     waterOk=true; // вода есть
                     operate=doHIGH; // сильное распыление
-                } else if(scr[0]==' ' && scr[1]==' ' && millis()-chScrTimer>5000){ // выключено
+                } else if(scr[0]==' ' && scr[1]==' ' && millis()-chScrTimer>5000 && operate!=doIDLE){ // выключено
                     operate=doIDLE; // простой
+                    if(target_set!=dsOFF){ // не ручной режим
+                        manual=true;
+                        _debugMsg(F("%010u: Set to OFF in manual mode."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                    }
                 }
                 chScrTimer=millis(); // таймштамп последнего изменения показаний дисплея
                 if(water_ok!=nullptr && waterOk!=now_water){ // обслуживание сенсора наличия воды
@@ -518,12 +550,25 @@ class HumiF600 : public Sensor, public PollingComponent  {
                         save_operate=now_operate; // запоминаем для восстановления после ошибки
                     }
                     if(need_new_set==false){ // переключение внешним воздействием на кнопки
-                        if(operate==doHIGH || operate==doMID || operate==doLOW /*|| operate==doIDLE*/){
+                        if(operate==doHIGH || operate==doMID || operate==doLOW){
                             manual=true;
                             _debugMsg(F("%010u: Set to manual mode."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
                         }
                     }
-                    op_mode->publish_state(get_str_from_op(operate));
+                    if(manual){
+                       if(operate==doIDLE){ // тут отключение вручную
+                          this->mode_select->publish_state(get_str_from_set(dsOFF));
+                       } else if(operate==doLOW){
+                          this->mode_select->publish_state(get_str_from_set(dsLOW));
+                       } else if(operate==doMID){
+                          this->mode_select->publish_state(get_str_from_set(dsMID));
+                       } else if(operate==doHIGH){
+                          this->mode_select->publish_state(get_str_from_set(dsHIGH));
+                       }
+                       op_mode->publish_state(get_str_from_op_manual(operate));
+                    } else {
+                       op_mode->publish_state(get_str_from_op(operate));
+                    }
                     now_operate=operate;
                 }                    
             }                
@@ -534,13 +579,13 @@ class HumiF600 : public Sensor, public PollingComponent  {
         if(need_new_set){ // установлен запрос установки нового режима
             if(target_set==dsOFF){ // требуется выключение
                 if(sensOn(PUSH)){ // жмем сенсор долго   
-                    //need_new_set=false; // ставим флаг нажатого сенсора
+                    need_new_set=false;    
                 }
             } else if((now_operate==doLOW  && target_set==dsLOW) ||
                       (now_operate==doMID  && target_set==dsMID) ||
                       (now_operate==doHIGH && target_set==dsHIGH)){
                 // установили запрошенный режим 
-                //need_new_set=false; // установлен ручной режим    
+                need_new_set=false; // установлен ручной режим    
             } else if (now_water) { // если есть вода
                 sensOn(CLICK); // кликаем сенсором , перебираем режимы
             } else { // нужный режим установлен
