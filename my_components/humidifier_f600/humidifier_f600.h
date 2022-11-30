@@ -98,10 +98,10 @@ class HumiF600 : public Sensor, public PollingComponent  {
     const char *const _ManualMid = "Manual Mid";
     const char *const doMANUAL_High = "Manual High";
     // для автоматического регулирования влажности
-    const float gisteresis=1; //гистерезис регулирования
+    const float gisteresis=1.0; //гистерезис регулирования
     // для регулировани режимов в пресете AUTO
-    const float set_high=15; //порог работы на максимуме, переключится на средний за 15% до цели
-    const float set_mid=5; //порог работы на средних настройках , переключится на мин. за 5% до цели
+    const float set_high=6.0; //порог работы на максимуме, переключится на средний за 15% до цели
+    const float set_mid=3.0; //порог работы на средних настройках , переключится на мин. за 5% до цели
     
     save_struct store_data; // массив сохрнения данных
     #ifdef ESP32    
@@ -338,7 +338,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
         _debugMsg(F("%010u: Humiditys current: %3.1f, destination:%3.1f "), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),hummidity_,target_hummidity_);
         if(manual==false){ // только не в режиме ручного управления
             if(hummidity_>(target_hummidity_+gisteresis)){ //влажность превысила установку
-                if(now_operate!=doIDLE){ //если не в простое
+               if(now_operate!=doIDLE){ //если не в простое
                     target_set=dsOFF; // нужно отключить устройство
                     need_new_set=true;
                     _debugMsg(F("%010u: Stop humiditing."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
@@ -346,23 +346,30 @@ class HumiF600 : public Sensor, public PollingComponent  {
             } else if(hummidity_<(target_hummidity_-gisteresis)){ //влажность меньше установленой
                 if(now_set==dsAUTO){ // автоматический режим
                     float delta=target_hummidity_-hummidity_; // разница между влажностями
-                    if(delta>set_high && (now_operate==doIDLE || now_operate==doUNDEF || now_set==dsLOW || now_set==dsMID)){
-                        target_set=dsHIGH; // включаем в максимальный режим
-                        need_new_set=true;
-                        _debugMsg(F("%010u: Run HIGH humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
-                    } else if(delta>set_mid && (now_operate==doIDLE || now_operate==doUNDEF || now_set==dsLOW || now_set==dsHIGH)){
-                        target_set=dsMID; // включаем в средний режим
-                        need_new_set=true;
-                        _debugMsg(F("%010u: Run MEDIUM humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
-                    } else if(now_operate==doIDLE || now_operate==doUNDEF || now_set==dsMID || now_set==dsHIGH){
-                        target_set=dsLOW; // включаем в слабый режим
-                        need_new_set=true;
-                        _debugMsg(F("%010u: Run LOW humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                    _debugMsg(F("%010u: Mode AUTO, delta humidity:%3.1f "), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),delta);
+                    static float old_delta=delta;
+                    
+                    _debugMsg(F("%010u: Gisterezis on over."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                    if(abs(old_delta-delta)>gisteresis){ // проверка гистерезиса                   
+                       if(delta>set_high && (now_operate==doIDLE || now_operate==doUNDEF || now_operate==doLOW || now_operate==doMID)){
+                           target_set=dsHIGH; // включаем в максимальный режим
+                           need_new_set=true;
+                           _debugMsg(F("%010u: Run HIGH humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                       } else if(delta>set_mid && (now_operate==doIDLE || now_operate==doUNDEF || now_operate==doLOW || now_operate==doHIGH)){
+                           target_set=dsMID; // включаем в средний режим
+                           need_new_set=true;
+                           _debugMsg(F("%010u: Run MEDIUM humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                       } else if(delta<set_mid && ( now_operate==doIDLE || now_operate==doUNDEF || now_operate==doMID || now_operate==doHIGH)){
+                           target_set=dsLOW; // включаем в слабый режим
+                           need_new_set=true;
+                           _debugMsg(F("%010u: Run LOW humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                       }
+                       old_delta=delta;
                     }
-                } else if((now_operate==doIDLE || now_operate==doUNDEF) && (now_set==dsLOW || now_set==dsMID || now_set==dsHIGH)){
+                } else if((now_operate==doIDLE || now_operate==doUNDEF) && (now_operate==doLOW || now_operate==doMID || now_operate==doHIGH)){
                     target_set=now_set; // включаем в ранее установленный режим   
                     need_new_set=true;
-                    _debugMsg(F("%010u: Run humiditing."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                    _debugMsg(F("%010u: Run static humiditing."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
                 }
             }
         } else {
@@ -503,6 +510,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
                 device_op operate=now_operate; //для контроля текущего режима
                 if(scr[0]>='0' && scr[0]<='5' && scr[1]>='0' && scr[1]<='9'){ // показывает температуру или задержку слипа
                     uint8_t temp=(scr[0]-'0')*10+(scr[1]-'0');
+                    waterOk=true;
                     if(temp>12){ //значение меньше, скорее всего SLEEP
                         if(main_temp!=nullptr && now_temperature!=temp){//датчик подключен и температура изменилась
                             //_debugMsg(F("%010u: Main temperature: %u"), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),temp);
@@ -514,7 +522,6 @@ class HumiF600 : public Sensor, public PollingComponent  {
                         _debugMsg(F("%010u: Set to manual mode."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
                         op_mode->publish_state(get_str_from_op_manual(operate));
                     }
-                    waterOk=true; // вода есть
                     if(now_operate==doERROR){ // восстановить индикацию режима работы
                         operate=save_operate;
                     }
@@ -525,13 +532,10 @@ class HumiF600 : public Sensor, public PollingComponent  {
                     waterOk=false; // воды нет
                     operate=doERROR; // ошибка
                 } else if(scr[0]=='_' && scr[1]=='_'){ // слабое распыление
-                    waterOk=true; // вода есть
                     operate=doLOW; // слабое распыление
                 } else if(scr[0]=='=' && scr[1]=='='){ // среднее распыление
-                    waterOk=true; // вода есть
                     operate=doMID; // среднее распыление
                 } else if(scr[0]=='#' && scr[1]=='#'){ // сильное распыление
-                    waterOk=true; // вода есть
                     operate=doHIGH; // сильное распыление
                 } else if(scr[0]==' ' && scr[1]==' ' && millis()-chScrTimer>5000 && operate!=doIDLE){ // выключено
                     operate=doIDLE; // простой
