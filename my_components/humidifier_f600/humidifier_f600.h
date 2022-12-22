@@ -98,10 +98,11 @@ class HumiF600 : public Sensor, public PollingComponent  {
     const char *const _ManualMid = "Manual Mid";
     const char *const doMANUAL_High = "Manual High";
     // для автоматического регулирования влажности
-    const float gisteresis=1.0; //гистерезис регулирования
+    const float gisteresis=2.0; //гистерезис регулирования
     // для регулировани режимов в пресете AUTO
-    const float set_high=6.0; //порог работы на максимуме, переключится на средний за 15% до цели
-    const float set_mid=3.0; //порог работы на средних настройках , переключится на мин. за 5% до цели
+    const float set_high=12.0; //порог работы на максимуме, переключится на средний 
+    const float set_mid=6.0; //порог работы на средних настройках , переключится 
+    const uint32_t changeDelay=30000; // после переключения в режиме авто 30 сек ничего не меняем
     
     save_struct store_data; // массив сохрнения данных
     #ifdef ESP32    
@@ -348,21 +349,24 @@ class HumiF600 : public Sensor, public PollingComponent  {
                     float delta=target_hummidity_-hummidity_; // разница между влажностями
                     _debugMsg(F("%010u: Mode AUTO, delta humidity:%3.1f "), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),delta);
                     static float old_delta=delta;
-                    
+                    static uint32_t timer=-changeDelay; // таймер гарантированной работы на этой настройке
                     _debugMsg(F("%010u: Gisterezis on over."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
-                    if(abs(old_delta-delta)>gisteresis){ // проверка гистерезиса                   
+                    if(abs(old_delta-delta)>gisteresis && millis()-timer>changeDelay){ // проверка гистерезиса, если переключились не менее 30 сек назад                   
                        if(delta>set_high && (now_operate==doIDLE || now_operate==doUNDEF || now_operate==doLOW || now_operate==doMID)){
                            target_set=dsHIGH; // включаем в максимальный режим
                            need_new_set=true;
                            _debugMsg(F("%010u: Run HIGH humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                           timer=millis();
                        } else if(delta>set_mid && (now_operate==doIDLE || now_operate==doUNDEF || now_operate==doLOW || now_operate==doHIGH)){
                            target_set=dsMID; // включаем в средний режим
                            need_new_set=true;
                            _debugMsg(F("%010u: Run MEDIUM humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                           timer=millis();
                        } else if(delta<set_mid && ( now_operate==doIDLE || now_operate==doUNDEF || now_operate==doMID || now_operate==doHIGH)){
                            target_set=dsLOW; // включаем в слабый режим
                            need_new_set=true;
                            _debugMsg(F("%010u: Run LOW humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                           timer=millis();
                        }
                        old_delta=delta;
                     }
@@ -377,29 +381,29 @@ class HumiF600 : public Sensor, public PollingComponent  {
         }
     }
 
-    friend class HumiF600PresetSelect;
-    friend class HumiF600TargetNumber;
-  
-  public:
     BinarySensor *water_ok{nullptr  };  // датчик наличия воды
     HumiF600PresetSelect *mode_select = nullptr;// режим работы
     HumiF600TargetNumber *target_humidity{nullptr};   // целевая влажность
     TextSensor *op_mode{nullptr};       // текущий режим работы
     Sensor* ext_humi_sens{nullptr};     // внешний сенсор влажности
     Sensor* main_temp{nullptr};         // температура с внутреннего датчика увлажнителя
-    GPIOPin* disp_sync_pin{};    // нога синхронизации дисплея
-    GPIOPin* disp_read0_pin{};   // нога чтения данных первого знакоместа
-    GPIOPin* disp_read1_pin{};   // нога чтения данных второго знакоместа
-    GPIOPin* sens_pin{};         // нога управления сенсором
-
+    GPIOPin* disp_sync_pin{nullptr};    // нога синхронизации дисплея
+    GPIOPin* disp_read0_pin{nullptr};   // нога чтения данных первого знакоместа
+    GPIOPin* disp_read1_pin{nullptr};   // нога чтения данных второго знакоместа
+    GPIOPin* sens_pin{nullptr};         // нога управления сенсором
+    friend class HumiF600PresetSelect;
+    friend class HumiF600TargetNumber;
+  
+  public:
+  
     // подключение ноги синхронизации дисплея
-    void set_sync_pin(GPIOPin  *pin = nullptr){ this->disp_sync_pin=pin; this->disp_sync_pin->setup();} 
+    void set_sync_pin(GPIOPin  *pin = nullptr){ this->disp_sync_pin=pin; pin->setup(); pin->pin_mode(gpio::FLAG_INPUT);} 
     // подключение ноги чтения первого знакоместа
-    void set_read0_pin(GPIOPin  *pin = nullptr){ this->disp_read0_pin=pin; this->disp_read0_pin->setup();} 
+    void set_read0_pin(GPIOPin  *pin = nullptr){ this->disp_read0_pin=pin; pin->setup(); pin->pin_mode(gpio::FLAG_INPUT);} 
     // подключение ноги чтения второго знакоместа
-    void set_read1_pin(GPIOPin  *pin = nullptr){ this->disp_read1_pin=pin; this->disp_read1_pin->setup();} 
+    void set_read1_pin(GPIOPin  *pin = nullptr){ this->disp_read1_pin=pin;  pin->setup(); pin->pin_mode(gpio::FLAG_INPUT);} 
     // подключение ноги управления сенсором
-    void set_sens_pin(GPIOPin  *pin = nullptr){ this->sens_pin=pin; this->sens_pin->setup();} 
+    void set_sens_pin(GPIOPin  *pin = nullptr){ this->sens_pin=pin; pin->setup(); pin->pin_mode(gpio::FLAG_OUTPUT); pin->digital_write(true);} 
     // локальный сенсор температуры
     void set_main_temp(sensor::Sensor *main_sensor) { this->main_temp=main_sensor;} 
     // подключение внешнего сенсора влажности 
@@ -476,16 +480,19 @@ class HumiF600 : public Sensor, public PollingComponent  {
       LOG_TEXT_SENSOR("", "Operating mode ", this->op_mode); 
       LOG_NUMBER("", "Humidity Target ", this->target_humidity);
       LOG_UPDATE_INTERVAL(this);
+      ESP_LOGCONFIG(TAG, "Stored parameters:");
+      ESP_LOGCONFIG(TAG, "  Target humidity %f",this->target_hummidity_);
+      ESP_LOGCONFIG(TAG, "  Current mode %s",get_str_from_set(now_set));
     }
  
     float get_setup_priority() const override {return setup_priority::LATE;}  
      
     void setup() override {
-        this->disp_sync_pin->pin_mode(gpio::FLAG_INPUT);
-        this->disp_read0_pin->pin_mode(gpio::FLAG_INPUT);
-        this->disp_read1_pin->pin_mode(gpio::FLAG_INPUT);
-        this->sens_pin->pin_mode(gpio::FLAG_OUTPUT);
-        this->sens_pin->digital_write(true); // поднять ногу :)
+        restore(); // восстановить настройки
+        this->target_humidity->state=this->target_hummidity_; //начальная инициализация
+        this->target_humidity->publish_state(this->target_humidity->state);
+        this->mode_select->publish_state(get_str_from_set(now_set));
+        this->change_process();
     }
     
     void loop() override {
