@@ -190,7 +190,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
     
     // считывание дисплея
     bool getStrFromLed(){
-        if(this->disp_sync_pin->digital_read()){ // запрос в неудачное время, сихра в высоком состоянии
+        if(this->disp_sync_pin->digital_read()){ // запрос в неудачное время, синхра в высоком состоянии
             return false;
         }
         static bool checkTiming=true; // флаг засечки тайминга синхры
@@ -445,6 +445,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
             need_new_set = true; // необходимость установки запрошенного по сети режима
             _debugMsg(F("%010u: User set mode: %s"), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),payload.c_str());
             now_water=true; // для проверки наличия воды
+            water_ok->publish_state(now_water);
         });
     }
     // подключение регулировки целевой влажности

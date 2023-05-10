@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import esphome.config_validation as cv
 import esphome.codegen as cg
 from esphome import automation, pins
@@ -11,6 +11,7 @@ from esphome.const import (
     CONF_NUMBER,
     CONF_CURRENT,
     CONF_DATA,
+    CONF_VALUE,
     CONF_TEMPERATURE,
     STATE_CLASS_MEASUREMENT,
     DEVICE_CLASS_TEMPERATURE,
@@ -21,7 +22,8 @@ from esphome.const import (
     CONF_MAX_VALUE,
     CONF_MIN_VALUE,
     CONF_STEP,
-
+    CONF_UNIT_OF_MEASUREMENT,
+    CONF_ACCURACY_DECIMALS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,6 +85,12 @@ CONFIG_SCHEMA  = cv.All(
             cv.Optional(CONF_DEST_HUMIDITY): number.NUMBER_SCHEMA.extend(
                 {
                     cv.GenerateID(): cv.declare_id(HumiF600TargetNumber),
+                    cv.Optional(CONF_VALUE, default=45): cv.float_,
+                    cv.Optional(CONF_MAX_VALUE, default=100): cv.float_,
+                    cv.Optional(CONF_MIN_VALUE, default=0): cv.float_,
+                    cv.Optional(CONF_STEP, default=2): cv.positive_float,
+                    cv.Optional(CONF_UNIT_OF_MEASUREMENT, default=UNIT_PERCENT): str, 
+                    cv.Optional(CONF_ACCURACY_DECIMALS, default=1): cv.positive_float,
                 }
             ),
             # установка режима работы пользователем
@@ -94,9 +102,9 @@ CONFIG_SCHEMA  = cv.All(
             # внешний сенсор влажности
             cv.Required(CONG_EXT_HUMIDITY): cv.use_id(sensor.Sensor),
             # ноги считывания дисплея
-            cv.Required(CONF_PIN_LED_SYNC ): pins.gpio_output_pin_schema,
-            cv.Required(CONF_PIN_READ0 ): pins.gpio_output_pin_schema,
-            cv.Required(CONF_PIN_READ1 ): pins.gpio_output_pin_schema,
+            cv.Required(CONF_PIN_LED_SYNC ): pins.gpio_input_pin_schema,
+            cv.Required(CONF_PIN_READ0 ): pins.gpio_input_pin_schema,
+            cv.Required(CONF_PIN_READ1 ): pins.gpio_input_pin_schema,
             # нога нажатия на сенсор
             cv.Required(CONF_PIN_SENSOR ): pins.gpio_output_pin_schema,
         }
@@ -148,11 +156,6 @@ async def to_code(config):
         cg.add(var.set_mode_select(sel))
     # установка целевой влажности    
     if CONF_DEST_HUMIDITY in config:
-        num = await number.new_number(config[CONF_DEST_HUMIDITY], min_value=0, max_value=100, step=5)
+        num = await number.new_number(config[CONF_DEST_HUMIDITY], min_value=0, max_value=100, step=2)
         cg.add(var.set_humidity_dest(num))
    
-    
-    
-    
-    
-    
