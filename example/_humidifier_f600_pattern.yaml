@@ -1,0 +1,94 @@
+external_components:
+  - source:
+      type: local
+      path: my_components     
+    components: [ humidifier_f600 ]
+    refresh: 0s
+    
+packages:
+  device_base: !include __device_base.yaml
+
+esphome:
+  includes:
+    - my_components/humidifier_f600/humidifier_f600.h
+
+esp32:
+  board:  esp32dev
+  framework:
+    type: arduino
+
+i2c:
+#шина I2C для датчика влажности и температуры GY-21
+  sda: GPIO21
+  scl: GPIO22
+
+output:
+#нога регулировки яркости дисплея
+  - platform: ledc
+    id: led_bri_control
+    pin: GPIO19
+    frequency: "5000Hz"
+    max_power: 1.0
+    min_power: 0.005
+    zero_means_zero: true
+
+light: 
+#регулировка яркости дисплея
+  - platform: monochromatic
+    output: led_bri_control
+    name: ${upper_devicename} Brightness Display
+    restore_mode: RESTORE_DEFAULT_ON
+
+switch:
+# управление звуком
+  - platform: gpio
+    name: ${upper_devicename} Sound
+    id: sound_id
+    pin: GPIO26
+    restore_mode: RESTORE_DEFAULT_ON
+    
+sensor:
+#датчик температуры и влажности GY-21, используется как внешний для увлажнителя
+  - platform: htu21d
+    temperature:
+      name: ${upper_devicename} Temperature
+      filters:
+         - offset: ${temp_offset}
+    humidity:
+      name: ${upper_devicename} Humidity
+      id: humidity_id
+      filters:
+         - offset: ${humi_offset}
+         - calibrate_linear:
+           - -100 -> 0
+           - 0 -> 0
+           - 100.0 -> 100.0
+           - 200.0 -> 100.0
+    update_interval: 60s
+#увлажнитель
+  - platform: "humidifier_f600"
+    name: $upper_devicename
+    id: test
+    update_interval: 60s
+    disp_sync_pin: GPIO16
+    disp_read0_pin: GPIO18
+    disp_read1_pin: GPIO5
+    sensor_control_pin: GPIO17
+    # внешний датчик влажности для компонента
+    sensor_humidity_id: humidity_id
+    # внутренний датчик температуры
+    temperature:
+      name: ${upper_devicename} Main Temperature
+    # сенсор воды
+    water_ok:
+      name: ${upper_devicename} Water
+    # текущий режим работы
+    current_state:  
+      name: ${upper_devicename} Current State
+    # селектор выбора режимов работы
+    current_preset:
+      name: ${upper_devicename} Current Preset
+    # установка целевой влажности
+    humidity_destination:
+      name: ${upper_devicename} Himidity Destination
+      unit_of_measurement: "%"

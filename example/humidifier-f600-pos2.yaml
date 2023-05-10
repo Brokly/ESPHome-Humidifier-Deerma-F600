@@ -1,0 +1,12 @@
+substitutions:
+  devicename: humidifier-f600-pos2
+  upper_devicename: Humi Deerma F600 Pos2
+  location: Второй этаж, в увлажнителе (китайская версия)
+  hardware: Custom ESP32 + GY21 + other
+  wifi_ip: !secret ip_humidifier_f600_pos2
+  humi_offset: "-10.0"
+  temp_offset: "1.0"
+
+<<: !include _humidifier_f600_pattern.yaml
+
+ 
