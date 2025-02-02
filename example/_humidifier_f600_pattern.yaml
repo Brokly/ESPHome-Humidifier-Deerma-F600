@@ -74,6 +74,8 @@ sensor:
     disp_read0_pin: GPIO18
     disp_read1_pin: GPIO5
     sensor_control_pin: GPIO17
+    # пин подклчения правого сенсора, для управления новой модиикаццей (2024) увлажниителя, при отсутствии этой настройки управление по старому 
+    sensor2_control_pin: GPIO25
     # внешний датчик влажности для компонента
     sensor_humidity_id: humidity_id
     # внутренний датчик температуры
