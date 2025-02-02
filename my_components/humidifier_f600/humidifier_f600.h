@@ -34,7 +34,8 @@ using namespace esphome::number;
 using namespace esphome::htu21d;
 
 // операции с сенсором
-enum sens_op:uint32_t { CLICK=20, // клик по сенсору
+enum sens_op:uint32_t { CLICK=20, // клик по сенсору 20
+                        NEW_CLICK=100, // клик для новой генераци устройств
                         PUSH=3500, // долгое нажатие для выключения
 };
 // текущий статус работы
@@ -67,7 +68,6 @@ class HumiF600;
 
 class HumiF600PresetSelect : public esphome::select::Select, public esphome::Parented<HumiF600> {
     protected:
-        // МЛЯ.... Чистое шаманство :( Бубен помог.
 	    void control(const std::string &value) override{
             this->state_callback_.call(value, 0);
         }
@@ -113,7 +113,9 @@ class HumiF600 : public Sensor, public PollingComponent  {
     device_op now_operate=doUNDEF; //режим работы
     device_op save_operate=doMID; //сохраненный режим , для запуска после работы
     bool now_water=true;  //наличие воды    
-    char scr[3]={0};       //текущая надпись на дисплее
+    char scr[3]={0};      //текущая надпись на дисплее
+    int16_t LCDetect=0;  // для детекции типа LCD (китайцы изменили схему подключения дисплея или тип дсплея, а значит и управление им)
+    uint8_t LCDerror=0; // счетчк ошибок чтения дсплея
     uint32_t chScrTimer=0; //таймер последнего изменения режима экрана 
     uint32_t sens_timer=0; //таймер нажатия на сенсор
     uint32_t sens_delay=0; //установка задержка нажатия на сенсор
@@ -123,23 +125,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
     float target_hummidity_=store_data.humidity; // целевая влажность
     float hummidity_=0; // текущая влажность
     bool manual=false; // флаг перехвата в ручное управление, поднимается при работе кнопками на устройстве 
-    // вывод отладочной информации в лог
-    // 
-    // dbgLevel - уровень сообщения, определен в ESPHome. За счет его использования можно из ESPHome управлять полнотой сведений в логе.
-    // msg - сообщение, выводимое в лог
-    // line - строка, на которой произошел вызов (удобно при отладке)
-    //
-    // Своровал, спасибо GrKoR :)
-    void _debugMsg(const String &msg, uint8_t dbgLevel = ESPHOME_LOG_LEVEL_DEBUG, unsigned int line = 0, ... ){
-        if (dbgLevel < ESPHOME_LOG_LEVEL_NONE) dbgLevel = ESPHOME_LOG_LEVEL_NONE;
-        if (dbgLevel > ESPHOME_LOG_LEVEL_VERY_VERBOSE) dbgLevel = ESPHOME_LOG_LEVEL_VERY_VERBOSE;
-        if (line == 0) line = __LINE__; // если строка не передана, берем текущую строку
-        va_list vl;
-        va_start(vl, line);
-        esp_log_vprintf_(dbgLevel, TAG, line, msg.c_str(), vl);
-        va_end(vl);
-    }
-
+    
     #ifdef ESP32
         // сохранение данные в епроме
         void store(){ 
@@ -148,9 +134,9 @@ class HumiF600 : public Sensor, public PollingComponent  {
                 store_data.humidity=target_hummidity_;
                 if(storage.save(&store_data)){
                     if(global_preferences->sync()){ // сохраняем во флеш
-                        _debugMsg(F("%010u: Sync NVRAM OK ! (load result: %02d)"), ESPHOME_LOG_LEVEL_DEBUG, __LINE__, millis(), load_presets_result);
+                        ESP_LOGD(TAG,"Sync NVRAM OK (load result: %02d)",load_presets_result);
                     } else {
-                        _debugMsg(F("%010u: Save NVRAM ERROR ! (load result: %02d)"), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis(), load_presets_result);
+                        ESP_LOGE(TAG,"Save NVRAM ERROR (load result: %02d)",load_presets_result);
                     }
                 }
             }
@@ -159,7 +145,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
         // восстановление данных из епрома
         void restore(){
             load_presets_result = storage.load(&store_data); // читаем из флеша
-            _debugMsg(F("%010u: Preset base read from NVRAM, result %02d."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__, millis(), load_presets_result);
+            ESP_LOGD(TAG,"Preset base read from NVRAM, result %02d",load_presets_result);
             now_set=store_data.preset;
             target_hummidity_=store_data.humidity;
         }
@@ -168,23 +154,108 @@ class HumiF600 : public Sensor, public PollingComponent  {
         void restore(){;}
     #endif
     // распознавание считанных символов из кода 7 сегментного индикатора в символы
+    
     uint8_t getNum(uint8_t d){
-        //_debugMsg(F("%010u: Display read %u"), ESPHOME_LOG_LEVEL_ERROR, __LINE__,millis(),d);
-        if     (d==0x40) return '0';
-        else if(d==0xF8) return '1';
-        else if(d==0x24) return '2';
-        else if(d==0x30) return '3';
-        else if(d==0x98) return '4';
-        else if(d==0x13) return '5';
-        else if(d==0x03) return '6';
-        else if(d==0x78) return '7';
-        else if(d==0x00) return '8';
-        else if(d==0x10) return '9';
-        else if(d==0x07) return 'E';
-        else if(d==0xFF) return ' ';
-        else if(d==0xF7) return '_';
-        else if(d==0xB7) return '=';
-        else if(d==0x37) return '#';
+        /*
+        if     (d==0x40 || d==0x04) return '0'; //0x04 01000000-00000100
+        else if(d==0xF8 || d==0xcf) return '1'; //0xcf 11111000-11001111
+        else if(d==0x24 || d==0x23) return '2'; //0x23 00100100-00100011
+        else if(d==0x30 || d==0x83) return '3'; //0x83 00110000-10000011
+        else if(d==0x98 || d==0xc8) return '4'; //0xcf 10011000-11001000
+        else if(d==0x13 || d==0x90) return '5'; //0x90 00010011-10010000
+        else if(d==0x03 || d==0x10) return '6'; //0x10 ??? 00000011-00010000
+        else if(d==0x78 || d==0xc7) return '7'; //0xc7 01111000-11000111
+        else if(d==0x00) return '8'; //0x00
+        else if(d==0x10 || d==0x80) return '9'; //0x80 00010000-10000000
+        else if(d==0x07 || d==0x30) return 'E'; //0x30 ????
+        else if(d==0xFF) return ' '; //0xff
+        else if(d==0xF7 || d==0xbf) return '_'; //0xbf 11110111-10111111
+        else if(d==0xB7 || d==0xbb) return '='; //0xbb 10110111-10111011
+        else if(d==0x37 || d==0xb3) return '#'; //0xb3
+        return 0;
+        */
+        
+        if(LCDetect>=10){ // детектирована старая схема подключения
+           if(d<0x20){
+              if(d==0x00) return '8'; 
+              else if(d==0x03) return '6'; 
+              else if(d==0x07) return 'E'; 
+              else if(d==0x10) return '9'; 
+              else if(d==0x13) return '5'; 
+           } else if(d<0x90){
+              if(d==0x24) return '2'; 
+              else if(d==0x30) return '3'; 
+              else if(d==0x37) return '#'; 
+              else if(d==0x40) return '0'; 
+              else if(d==0x78) return '7'; 
+           } else {
+              if(d==0x98) return '4'; 
+              else if(d==0xB7) return '='; 
+              else if(d==0xF7) return '_'; 
+              else if(d==0xF8) return '1'; 
+              else if(d==0xFF) return ' '; 
+           }
+        } else if(LCDetect<=-10){ // детектирована новая схема подключения
+           if(d<0x80){
+              if(d==0x00) return '8'; 
+              else if(d==0x04) return '0'; 
+              else if(d==0x10) return '6'; 
+              else if(d==0x23) return '2'; 
+              else if(d==0x30) return 'E'; 
+           } else if(d<0xbf){
+              if(d==0x80) return '9'; 
+              else if(d==0x83) return '3'; 
+              else if(d==0x90) return '5'; 
+              else if(d==0xb3) return '#'; 
+              else if(d==0xbb) return '='; 
+           } else {   
+              if(d==0xbf) return '_'; 
+              else if(d==0xc7) return '7'; 
+              else if(d==0xc8) return '4'; 
+              else if(d==0xcf) return '1'; 
+              else if(d==0xFF) return ' '; 
+           } 
+        } else { // фаза детекции схемы подключения дисплея
+           if (d<0x11) {
+              if(d==0x00) return '8';
+              else if(d==0x03){LCDetect++;  return '6';} 
+              else if(d==0x04){LCDetect--;  return '0';} 
+              else if(d==0x07){LCDetect++;  return 'E';} 
+              else if(d==0x10){
+                 if     (LCDetect<0) return '6'; 
+                 else if(LCDetect>0) return '9'; 
+              }
+           } else if(d<0x40) {
+              if(d==0x13){LCDetect++;  return '5';} 
+              else if(d==0x23){LCDetect--;  return '2';} 
+              else if(d==0x24){LCDetect++;  return '2';} 
+              else if(d==0x30){
+                 if     (LCDetect>0) return '3'; 
+                 else if(LCDetect<0) return 'E'; 
+              }
+              else if(d==0x37){LCDetect++;  return '#';} 
+           } else if(d<0x91) {
+              if(d==0x40){LCDetect++;  return '0';} 
+              else if(d==0x78){LCDetect++;  return '7';} 
+              else if(d==0x80){LCDetect--;  return '9';} 
+              else if(d==0x83){LCDetect--;  return '3';} 
+              else if(d==0x90){LCDetect--;  return '5';} 
+           } else if(d<0xC0) {
+              if(d==0x98){LCDetect++;  return '4';} 
+              else if(d==0xb3){LCDetect--;  return '#';} 
+              else if(d==0xB7){LCDetect++;  return '=';} 
+              else if(d==0xbb){LCDetect--;  return '=';} 
+              else if(d==0xbf){LCDetect--;  return '_';} 
+           } else if(d<0xd0) {
+              if(d==0xc7){LCDetect--;  return '7';} 
+              else if(d==0xc8){LCDetect--;  return '4';} 
+              else if(d==0xcf){LCDetect--;  return '1';} 
+           } else {
+              if(d==0xF7){LCDetect++;  return '_';} 
+              else if(d==0xF8){LCDetect++;  return '1';} 
+              else if(d==0xFF) return ' '; 
+           }
+        }
         return 0;
     }
     
@@ -198,7 +269,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
         uint32_t breakTimer=millis();
         while(!(this->disp_sync_pin->digital_read())){ //ждем когда синхра перекинется из 0 в 1
             if(millis()-breakTimer>50){ //предохранитель от зацикливания
-                _debugMsg(F("%010u: Display read start sync ERROR !"), ESPHOME_LOG_LEVEL_ERROR, __LINE__,millis());
+                ESP_LOGE(TAG,"Display read start sync (0->1) ERROR !");
                 return false;
             }
         }
@@ -208,7 +279,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
             breakTimer=millis();
             while(this->disp_sync_pin->digital_read()){ // ждем когда синхра перекинется из 1 в 0
                 if(millis()-breakTimer>5){ //предохранитель от зацикливания
-                    _debugMsg(F("%010u: Display read end sync ERROR !"), ESPHOME_LOG_LEVEL_ERROR, __LINE__,millis());
+                    ESP_LOGE(TAG,"Display read start sync (1->0) ERROR !");
                     return false;
                 }
             }
@@ -219,6 +290,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
         checkTiming=true;
         uint8_t mask=1;
         uint8_t d[3]={0};
+        uint8_t t[2];
         uint32_t timer; // таймер синхронизации
         for(uint8_t i=0; i<8; i++){
             timer=micros();
@@ -232,16 +304,24 @@ class HumiF600 : public Sensor, public PollingComponent  {
             mask<<=1;
             while(micros()-timer<timeCalibrate); //ждем таймслота следующего бита
         }
-        d[0]=getNum(d[0]);
-        d[1]=getNum(d[1]);
-        //_debugMsg(F("%010u: Display: %s"), ESPHOME_LOG_LEVEL_ERROR, __LINE__,millis(),d);
-        if(d[0]==0 || d[1]==0){ // ошиблись
-            //_debugMsg(F("%010u: Display read error"), ESPHOME_LOG_LEVEL_ERROR, __LINE__,millis());
+        t[1]=getNum(d[1]); //во втором знакоместе совпадащх символов у нового и старого дисплея меньше   
+        t[0]=getNum(d[0]);
+        if(t[1]==0) t[1]=getNum(d[1]); // повторная попытка распознать первый символ
+        if(t[0]==0 || t[1]==0){ // ошиблись
+            LCDerror++; //увеличиваем счетчк ошибок
+            if(LCDerror>8){
+               ESP_LOGE(TAG,"Display read ERROR %x - %x ",d[0],d[1]);
+               LCDerror--;
+            } else {
+               ESP_LOGV(TAG,"Display read ERROR %x - %x ",d[0],d[1]);
+            }
             return false;
         }
-        if(scr[0]!=d[0] || scr[1]!=d[1]){ 
-            scr[0]=d[0];
-            scr[1]=d[1];
+        LCDerror=0; // сброс счетчиика ошбок
+        if(scr[0]!=t[0] || scr[1]!=t[1]){ 
+            scr[0]=t[0];
+            scr[1]=t[1];
+            ESP_LOGD(TAG,"Display: |%s|",scr);
             return true; // дисплей изменился
         }
         return false;  // дисплей не изменилось 
@@ -252,9 +332,23 @@ class HumiF600 : public Sensor, public PollingComponent  {
         if(sens_delay){
             return false;
         }
+        if(this->sens_pin2!=nullptr){ // есть второй сенсор, значит управляем правой кнопкой, включаем левой
+           if(delay != PUSH && now_operate!=doIDLE){ // хотим выкл, при наличии второго сенсора это делается первым, но коротким кликом
+              this->sens_pin2->digital_write(false); // тянем конденсатор на сенсоре к нулю
+              this->sens_pin2_state=false;
+              sens_timer = millis(); //таймер нажатия на сенсор
+              sens_delay = NEW_CLICK; //установка задержки нажатия на сенсор
+              ESP_LOGD(TAG,"%d Push sensor RIGHT, delay: %d",millis(),delay);
+              return true;
+           } else {
+              delay=NEW_CLICK; //установка задержки нажатия на 1 сенсор
+           }
+        }        
         this->sens_pin->digital_write(false); // тянем конденсатор на сенсоре к нулю
+        this->sens_pin_state=false;
         sens_timer = millis(); //таймер нажатия на сенсор
         sens_delay = delay; //установка задержки нажатия на сенсор
+        ESP_LOGD(TAG,"%d Push sensor LEFT, delay: %d",millis(),delay);
         return true;
     }
  
@@ -336,36 +430,35 @@ class HumiF600 : public Sensor, public PollingComponent  {
         
     // обработка при изменении влажностей целевой и/или текущей
     void change_process(){
-        _debugMsg(F("%010u: Humiditys current: %3.1f, destination:%3.1f "), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),hummidity_,target_hummidity_);
+        ESP_LOGD(TAG,"Humiditys current: %3.1f, destination:%3.1f",hummidity_,target_hummidity_);
         if(manual==false){ // только не в режиме ручного управления
             if(hummidity_>(target_hummidity_+gisteresis)){ //влажность превысила установку
                if(now_operate!=doIDLE){ //если не в простое
                     target_set=dsOFF; // нужно отключить устройство
                     need_new_set=true;
-                    _debugMsg(F("%010u: Stop humiditing."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                    ESP_LOGD(TAG,"Stop humiditing");
                 }
             } else if(hummidity_<(target_hummidity_-gisteresis)){ //влажность меньше установленой
                 if(now_set==dsAUTO){ // автоматический режим
                     float delta=target_hummidity_-hummidity_; // разница между влажностями
-                    _debugMsg(F("%010u: Mode AUTO, delta humidity:%3.1f "), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),delta);
+                    ESP_LOGD(TAG,"Mode AUTO, delta humidity:%3.1f",delta);
                     static float old_delta=delta;
                     static uint32_t timer=-changeDelay; // таймер гарантированной работы на этой настройке
-                    _debugMsg(F("%010u: Gisterezis on over."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
                     if(abs(old_delta-delta)>gisteresis && millis()-timer>changeDelay){ // проверка гистерезиса, если переключились не менее 30 сек назад                   
                        if(delta>set_high && (now_operate==doIDLE || now_operate==doUNDEF || now_operate==doLOW || now_operate==doMID)){
                            target_set=dsHIGH; // включаем в максимальный режим
                            need_new_set=true;
-                           _debugMsg(F("%010u: Run HIGH humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                           ESP_LOGD(TAG,"Run HIGH humiditing");
                            timer=millis();
                        } else if(delta>set_mid && (now_operate==doIDLE || now_operate==doUNDEF || now_operate==doLOW || now_operate==doHIGH)){
                            target_set=dsMID; // включаем в средний режим
                            need_new_set=true;
-                           _debugMsg(F("%010u: Run MEDIUM humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                           ESP_LOGD(TAG,"Run MEDIUM humiditing");
                            timer=millis();
                        } else if(delta<set_mid && ( now_operate==doIDLE || now_operate==doUNDEF || now_operate==doMID || now_operate==doHIGH)){
                            target_set=dsLOW; // включаем в слабый режим
                            need_new_set=true;
-                           _debugMsg(F("%010u: Run LOW humiditing ."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                           ESP_LOGD(TAG,"Run LOW humiditing");
                            timer=millis();
                        }
                        old_delta=delta;
@@ -373,11 +466,11 @@ class HumiF600 : public Sensor, public PollingComponent  {
                 } else if((now_operate==doIDLE || now_operate==doUNDEF) && (now_operate==doLOW || now_operate==doMID || now_operate==doHIGH)){
                     target_set=now_set; // включаем в ранее установленный режим   
                     need_new_set=true;
-                    _debugMsg(F("%010u: Run static humiditing."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                    ESP_LOGD(TAG,"Run static humiditing");
                 }
             }
         } else {
-            _debugMsg(F("%010u: In manual mode, the adjustment is disabled."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+            ESP_LOGD(TAG,"In manual mode, the adjustment is disabled.");
         }
     }
 
@@ -391,6 +484,9 @@ class HumiF600 : public Sensor, public PollingComponent  {
     GPIOPin* disp_read0_pin{nullptr};   // нога чтения данных первого знакоместа
     GPIOPin* disp_read1_pin{nullptr};   // нога чтения данных второго знакоместа
     GPIOPin* sens_pin{nullptr};         // нога управления сенсором
+    bool sens_pin_state=true;
+    GPIOPin* sens_pin2{nullptr};        // вторая нога управления сенсором
+    bool sens_pin2_state=true;
     friend class HumiF600PresetSelect;
     friend class HumiF600TargetNumber;
   
@@ -404,6 +500,13 @@ class HumiF600 : public Sensor, public PollingComponent  {
     void set_read1_pin(GPIOPin  *pin = nullptr){ this->disp_read1_pin=pin;  pin->setup(); pin->pin_mode(gpio::FLAG_INPUT);} 
     // подключение ноги управления сенсором
     void set_sens_pin(GPIOPin  *pin = nullptr){ this->sens_pin=pin; pin->setup(); pin->pin_mode(gpio::FLAG_OUTPUT); pin->digital_write(true);} 
+    // подключение ноги управления вторым сенсором
+    void set_sens2_pin(GPIOPin  *pin = nullptr){ 
+       this->sens_pin2=pin; 
+       pin->setup(); 
+       pin->pin_mode(gpio::FLAG_OUTPUT); 
+       pin->digital_write(true);
+    } 
     // локальный сенсор температуры
     void set_main_temp(sensor::Sensor *main_sensor) { this->main_temp=main_sensor;} 
     // подключение внешнего сенсора влажности 
@@ -433,7 +536,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
             // колбэк при выборе режима 
             if(manual){
                 manual=false; // отключаем ручное управление
-                _debugMsg(F("%010u: Manual mode Off."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                ESP_LOGD(TAG,"Manual mode Off");
             }
             device_set new_set=get_set_from_str(payload.c_str());
             now_set=new_set; // запоминаем режим для дальнейшей обработки, в режиме регулировки влажности
@@ -443,7 +546,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
             target_set=new_set; // установим новый режим
             store();
             need_new_set = true; // необходимость установки запрошенного по сети режима
-            _debugMsg(F("%010u: User set mode: %s"), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),payload.c_str());
+            ESP_LOGD(TAG,"User set mode: %s", payload.c_str());
             now_water=true; // для проверки наличия воды
             water_ok->publish_state(now_water);
         });
@@ -459,7 +562,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
             if (!std::isnan(sensor_value)) {
                 if(manual){
                     manual=false; // отключаем ручное управление
-                    _debugMsg(F("%010u: Manual mode Off."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                    ESP_LOGD(TAG,"Manual mode Off");
                 }
                 target_hummidity_= sensor_value; // целевая влажность
                 store();
@@ -473,7 +576,10 @@ class HumiF600 : public Sensor, public PollingComponent  {
       LOG_PIN("Input display sync pin ", this->disp_sync_pin);
       LOG_PIN("Input display data0 pin ", this->disp_read0_pin);
       LOG_PIN("Input display data1 pin ", this->disp_read1_pin);
-      LOG_PIN("Output sensor control pin ", this->sens_pin);
+      LOG_PIN("Output sensor LEFT control pin ", this->sens_pin);
+      if(this->sens_pin2!=nullptr){
+         LOG_PIN("Output sensor RIGHT control pin ", this->sens_pin2);
+      }
       LOG_SENSOR("", "Main Temperature ", this->main_temp);
       LOG_SENSOR("", "External Humidity ", this->ext_humi_sens);
       LOG_SELECT("", "Select mode ", this->mode_select);
@@ -498,13 +604,30 @@ class HumiF600 : public Sensor, public PollingComponent  {
     
     void loop() override {
         
+        //static uint32_t test_timer=0;
+        //if(millis()-test_timer>10000){
+        //    dump_config();
+        //    test_timer=millis();
+        //}
+        
         // обработка сенсорной кнопки
         if(sens_delay) {
             uint32_t _now=millis();
             if(_now-sens_timer>sens_delay+1500){ // между нажатиями на кнопку должно быть не менее 1сек
                sens_delay=0; 
             } else if (_now-sens_timer>sens_delay){ // истекло время нажатия
-               this->sens_pin->digital_write(true); 
+               if(this->sens_pin_state==false){
+                  this->sens_pin->digital_write(true);
+                  this->sens_pin_state=true;
+                  ESP_LOGD(TAG,"%d Release sensor LEFT",millis());
+               }
+               if(this->sens_pin2!=nullptr){
+                  if(this->sens_pin2_state==false){
+                     this->sens_pin2->digital_write(true);
+                     this->sens_pin2_state=true;
+                     ESP_LOGD(TAG,"%d Release sensor RIGHT",millis());
+                  }
+               }
             }               
         } 
         
@@ -512,7 +635,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
         static uint32_t led_read_timer=millis();
         if(millis()-led_read_timer>200){ // проверяем дисплей 5 раз в секунду
             if(getStrFromLed() || millis()-chScrTimer>5000){ // показания дисплея изменились
-                //_debugMsg(F("%010u: Display: %s"), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),this->scr);
+                ESP_LOGV(TAG,"Display: %s",this->scr);
                 // детектирование текущего режима работы
                 bool waterOk=now_water; // для контроля сенсора наличия воды
                 device_op operate=now_operate; //для контроля текущего режима
@@ -521,13 +644,13 @@ class HumiF600 : public Sensor, public PollingComponent  {
                     waterOk=true;
                     if(temp>12){ //значение меньше, скорее всего SLEEP
                         if(main_temp!=nullptr && now_temperature!=temp){//датчик подключен и температура изменилась
-                            //_debugMsg(F("%010u: Main temperature: %u"), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),temp);
+                            ESP_LOGV(TAG,"Main temperature: %u",temp);
                             main_temp->publish_state(temp);
                             now_temperature=temp; // уравниваем значение
                         }
                     } else {
                         manual=true; // раз нажали кнопку слипа - перешли в ручное управление
-                        _debugMsg(F("%010u: Set to manual mode."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                        ESP_LOGD(TAG,"Set to manual mode");
                         op_mode->publish_state(get_str_from_op_manual(operate));
                     }
                     if(now_operate==doERROR){ // восстановить индикацию режима работы
@@ -549,7 +672,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
                     operate=doIDLE; // простой
                     if(target_set!=dsOFF){ // не ручной режим
                         manual=true;
-                        _debugMsg(F("%010u: Set to OFF in manual mode."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                        ESP_LOGD(TAG,"Set to OFF in manual mode");
                     }
                 }
                 chScrTimer=millis(); // таймштамп последнего изменения показаний дисплея
@@ -564,7 +687,7 @@ class HumiF600 : public Sensor, public PollingComponent  {
                     if(need_new_set==false){ // переключение внешним воздействием на кнопки
                         if(operate==doHIGH || operate==doMID || operate==doLOW){
                             manual=true;
-                            _debugMsg(F("%010u: Set to manual mode."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                            ESP_LOGD(TAG,"Set to manual mode");
                         }
                     }
                     if(manual){
