@@ -36,6 +36,8 @@ CONF_PIN_LED_SYNC = "disp_sync_pin"
 CONF_PIN_READ0 = "disp_read0_pin"
 CONF_PIN_READ1 = "disp_read1_pin"
 CONF_PIN_SENSOR = "sensor_control_pin"
+CONF_PIN_SENSOR2 = "sensor2_control_pin"
+CONF_SENSOR2_DISABLE ="sensor2_disable"
 CONG_EXT_HUMIDITY = "sensor_humidity_id"
 CONF_WATER_TANK = "water_ok"
 ICON_WATER_TANK = "mdi:water-opacity"
@@ -62,7 +64,7 @@ def output_info(config):
     return config
 
 CONFIG_SCHEMA  = cv.All(
-    sensor.SENSOR_SCHEMA.extend(
+    sensor.sensor_schema(sensor.Sensor).extend(
         {
             cv.GenerateID(): cv.declare_id(HumiF600),
             # внутренний датчик температуры
@@ -82,7 +84,7 @@ CONFIG_SCHEMA  = cv.All(
                 icon=ICON_CURRENT_STATE,
             ),
             # установка целевой влажности
-            cv.Optional(CONF_DEST_HUMIDITY): number.NUMBER_SCHEMA.extend(
+            cv.Optional(CONF_DEST_HUMIDITY): number.number_schema(number.Number).extend(
                 {
                     cv.GenerateID(): cv.declare_id(HumiF600TargetNumber),
                     cv.Optional(CONF_VALUE, default=45): cv.float_,
@@ -94,7 +96,7 @@ CONFIG_SCHEMA  = cv.All(
                 }
             ),
             # установка режима работы пользователем
-            cv.Required(CONF_CURRENT_PRESET): select.SELECT_SCHEMA.extend(
+            cv.Required(CONF_CURRENT_PRESET): select.select_schema(select.Select).extend(
                 {
                     cv.GenerateID(): cv.declare_id(HumiF600PresetSelect),
                 }
@@ -105,8 +107,11 @@ CONFIG_SCHEMA  = cv.All(
             cv.Required(CONF_PIN_LED_SYNC ): pins.gpio_input_pin_schema,
             cv.Required(CONF_PIN_READ0 ): pins.gpio_input_pin_schema,
             cv.Required(CONF_PIN_READ1 ): pins.gpio_input_pin_schema,
-            # нога нажатия на сенсор
+            # ноги нажатия на сенсор
             cv.Required(CONF_PIN_SENSOR ): pins.gpio_output_pin_schema,
+            cv.Optional(CONF_SENSOR2_DISABLE ): cv.boolean,
+            cv.Optional(CONF_PIN_SENSOR2 ): pins.gpio_output_pin_schema,
+
         }
     )
     .extend(cv.polling_component_schema("60s"))
@@ -114,8 +119,6 @@ CONFIG_SCHEMA  = cv.All(
 )            
    
 async def to_code(config):
-    #_LOGGER.info("--------------")
-    #_LOGGER.info(config)
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     # температура
@@ -150,6 +153,11 @@ async def to_code(config):
     if CONF_PIN_SENSOR in config:
         pin = await cg.gpio_pin_expression(config[CONF_PIN_SENSOR])
         cg.add(var.set_sens_pin(pin))
+    # нога управления второй сенсорной кнопкой
+    if CONF_PIN_SENSOR2 in config:
+        if CONF_SENSOR2_DISABLE not in config or config[CONF_SENSOR2_DISABLE] == False:
+            pin2 = await cg.gpio_pin_expression(config[CONF_PIN_SENSOR2])
+            cg.add(var.set_sens2_pin(pin2))
     # селектор выбора режимов работы
     if CONF_CURRENT_PRESET in config:
         sel = await select.new_select(config[CONF_CURRENT_PRESET], options=OPTIONS_PRESETS)
