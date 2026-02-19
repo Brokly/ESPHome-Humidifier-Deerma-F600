@@ -13,6 +13,15 @@
 #include "esphome/components/htu21d/htu21d.h"
 #include "esphome/components/number/number.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/version.h"
+#include "esphome/core/util.h"
+
+#if __has_include("esphome/core/macros.h")
+   #include "esphome/core/macros.h" // VERSION_CODE
+#else
+   #define VERSION_CODE(major, minor, patch) ((major) << 16 | (minor) << 8 | (patch))
+#endif
+
 #ifdef ESP32
     #include "esphome/core/preferences.h"
 #else
@@ -69,9 +78,15 @@ class HumiF600;
 
 class HumiF600PresetSelect : public esphome::select::Select, public esphome::Parented<HumiF600> {
     protected:
-	    void control(const std::string &value) override{
-            this->state_callback_.call(value, 0);
+     #if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 1, 0)
+	    void control(size_t index) override{
+            this->state_callback_.call(index);
         }
+     #else
+	    void control(const std::string &value) override{
+            this->state_callback_.call(value, index_of(value).value());
+        }
+     #endif
     friend class HumiF600;   
 };
 
@@ -104,12 +119,17 @@ class HumiF600 : public Sensor, public PollingComponent  {
     const float set_high=12.0; //порог работы на максимуме, переключится на средний 
     const float set_mid=6.0; //порог работы на средних настройках , переключится 
     const uint32_t changeDelay=30000; // после переключения в режиме авто 30 сек ничего не меняем
-    
+  
     save_struct store_data; // массив сохрнения данных
     #ifdef ESP32    
-        ESPPreferenceObject storage = global_preferences->make_preference<save_struct>(this->get_object_id_hash(), true);
+       #if ESPHOME_VERSION_CODE > VERSION_CODE(2026, 1, 5)
+           ESPPreferenceObject storage = this->make_entity_preference<save_struct>();
+       #else
+           ESPPreferenceObject storage = global_preferences->make_preference<save_struct>(this->get_object_id_hash(), true);
+       #endif
         uint8_t load_presets_result = 0xFF;
     #endif
+    
     uint8_t now_temperature=0; // показания локальной температуры
     device_op now_operate=doUNDEF; //режим работы
     device_op save_operate=doMID; //сохраненный режим , для запуска после работы
@@ -518,7 +538,16 @@ class HumiF600 : public Sensor, public PollingComponent  {
         this->mode_select = sel;
         restore();
         this->mode_select->publish_state(get_str_from_set(now_set));
+      #if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 1, 0)
+        this->mode_select->add_on_state_callback([this](size_t num) {
+            std::string payload="";
+            auto value = this->mode_select->at(num);
+            if (value.has_value()) { 
+               payload = value.value(); 
+            } 
+      #else
         this->mode_select->add_on_state_callback([this](std::string payload, size_t num) {
+      #endif
             // колбэк при выборе режима 
             if(manual){
                 manual=false; // отключаем ручное управление
